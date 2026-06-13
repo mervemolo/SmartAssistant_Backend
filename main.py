@@ -271,16 +271,20 @@ async def health_check(path, request_headers):
 # ==========================
 
 async def main():
-    PORT = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Server başladı Port:{PORT}")
-
-    # 2. process_request kısmını buraya ekle
+    # Render'ın otomatik atadığı PORT değerini al (varsayılan 10000)
+    port = int(os.environ.get("PORT", 10000))
+    
+    print(f"🚀 Sunucu {port} portunda başlatılıyor...")
+    
+    # 'process_request' ile Render'ın port taramasını susturuyoruz
     async with websockets.serve(
         audio_stream_handler, 
         "0.0.0.0", 
-        PORT,
-        process_request=health_check, # Render'ın HEAD/GET isteklerini artık bu fonksiyon karşılayacak
-        ping_interval=None,
-        ping_timeout=None
+        port,
+        process_request=health_check 
     ):
-        await asyncio.Future() # Sunucuyu sonsuza kadar açık tut
+        print(f"✅ WebSocket sunucusu {port} portunda yayında!")
+        await asyncio.Future()  # Sunucuyu canlı tut
+
+if __name__ == "__main__":
+    asyncio.run(main())
