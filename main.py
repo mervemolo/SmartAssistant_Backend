@@ -188,44 +188,26 @@ async def audio_stream_handler(websocket):
         print("\n🔌 ESP32 Bağlantıyı kapattı.")
     finally:
         is_processing = False
-
 async def health_check(path, request_headers):
-    """
-    Render'ın gönderdiği HEAD isteklerini yakalar ve
-    WebSocket bağlantısına düşmeden önce HTTP 200 OK döner.
-    """
+    # Eğer gelen istek bir WebSocket 'Upgrade' isteği değilse, 200 OK dön
     if "upgrade" not in request_headers.get("Connection", "").lower():
         return http.HTTPStatus.OK, [], b"OK\n"
+    # Eğer WebSocket ise, el sıkışmanın devam etmesine izin ver
     return None
 
-async def audio_stream_handler(websocket):
-    # Bağlantı yönetimi mantığın buraya
-    try:
-        async for message in websocket:
-            # ... mesaj işleme mantığı ...
-            pass
-    except websockets.exceptions.ConnectionClosed:
-        pass
-
 async def main():
-    # Render tarafından atanan PORT'u al, varsayılan 10000
-    port = int(os.environ.get("PORT", 10000))
+    # Render'ın dinamik portunu al
+    PORT = int(os.environ.get("PORT", 10000))
     
-    # Sunucuyu yapılandır
-    # process_request parametresi ile sağlık kontrolünü devreye alıyoruz
+    # Sunucuyu başlatırken sağlık kontrolünü 'process_request' ile bağla
     async with websockets.serve(
         audio_stream_handler, 
         "0.0.0.0", 
-        port,
-        process_request=health_check 
+        PORT,
+        process_request=health_check
     ):
-        print(f"🚀 Sunucu {port} portunda yayında.")
-        
-        # Uygulamanın düzgün bir şekilde beklemesini sağlar
-        await asyncio.Future()
+        print(f"🚀 WebSocket sunucusu {PORT} portunda yayında.")
+        await asyncio.Future()  # Sunucuyu sonsuza kadar canlı tut
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())
