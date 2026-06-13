@@ -257,34 +257,25 @@ async def audio_stream_handler(websocket):
 # ==========================
 
 async def health_check(path, request_headers):
-    # Eğer gelen istek bir WebSocket yükseltme isteği DEĞİLSE
+    # Eğer gelen istek bir WebSocket 'Upgrade' isteği değilse, 200 OK dön
     if "upgrade" not in request_headers.get("Connection", "").lower():
-        # Render'ın "yaşıyor musun?" sorgusuna 200 OK yanıtını döndür
         return http.HTTPStatus.OK, [], b"OK\n"
-    # Eğer WebSocket isteğiyse devam et
+    # WebSocket ise el sıkışmaya izin ver
     return None
 
-
-
-# ==========================
-# SERVER
-# ==========================
-
 async def main():
-    # Render'ın otomatik atadığı PORT değerini al (varsayılan 10000)
+    # Render'ın verdiği PORT değerini al
     port = int(os.environ.get("PORT", 10000))
     
-    print(f"🚀 Sunucu {port} portunda başlatılıyor...")
-    
-    # 'process_request' ile Render'ın port taramasını susturuyoruz
+    # process_request parametresi ile sağlık kontrolünü ekliyoruz
     async with websockets.serve(
         audio_stream_handler, 
         "0.0.0.0", 
         port,
-        process_request=health_check 
+        process_request=health_check
     ):
-        print(f"✅ WebSocket sunucusu {port} portunda yayında!")
-        await asyncio.Future()  # Sunucuyu canlı tut
+        print(f"🚀 Sunucu {port} portunda çalışıyor")
+        await asyncio.Future() 
 
 if __name__ == "__main__":
     asyncio.run(main())
