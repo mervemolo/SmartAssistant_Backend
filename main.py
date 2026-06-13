@@ -257,29 +257,25 @@ async def audio_stream_handler(websocket):
 # ==========================
 
 async def health_check(path, request_headers):
-    # Eğer gelen istek WebSocket 'Upgrade' isteği DEĞİLSE
+    # Eğer gelen istek bir WebSocket "Upgrade" isteği değilse, 200 OK dön
     if "upgrade" not in request_headers.get("Connection", "").lower():
-        # Render'ı 200 OK ile sustur
         return http.HTTPStatus.OK, [], b"OK\n"
     return None
 
 async def main():
+    # Render'ın verdiği portu al (varsayılan 10000)
     PORT = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Sunucu {PORT} portunda başlatılıyor...")
     
-    # Sunucuyu tanımla
+    # 2. process_request parametresi ile sağlık kontrolünü bağla
     async with websockets.serve(
         audio_stream_handler, 
         "0.0.0.0", 
         PORT,
         process_request=health_check 
     ):
-        print(f"✅ WebSocket sunucusu {PORT} portunda yayında!")
-        # BURASI ÇOK ÖNEMLİ: Uygulamanın kapanmaması için sonsuza kadar beklet
+        print(f"🚀 Sunucu {PORT} portunda başarıyla çalışıyor")
+        # Uygulamanın erken kapanmaması için sonsuz döngü
         await asyncio.Future() 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print(f"CRITICAL ERROR: {e}")
+    asyncio.run(main())
