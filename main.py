@@ -190,13 +190,22 @@ async def audio_stream_handler(websocket):
         is_processing = False
 
 async def main():
-    # 🎯 BULUT UYUMU: Bulut sunucusunun verdiği dinamik portu oku, yoksa yerelde 8765 kullan
-    PORT = int(os.environ.get("PORT", 8765))
+    PORT = int(os.environ.get("PORT", 10000))
     
-    print(f"🚀 Yapay Zeka Asistan Sunucusu Aktif... Port: {PORT}")
-    async with websockets.serve(audio_stream_handler, "0.0.0.0", PORT):
-        await asyncio.Future()
+    # Render'da WebSocket bazen direkt HTTP isteği gibi algılanabilir.
+    # Bu yüzden host'u "0.0.0.0" olarak bırakmak en güvenlisidir.
+    async with websockets.serve(
+        audio_stream_handler, 
+        "0.0.0.0", 
+        PORT,
+        ping_interval=None, # Render'da bağlantı kopmasını engellemek için
+        ping_timeout=None
+    ):
+        print(f"🚀 Sunucu {PORT} portunda başarıyla başlatıldı!")
+        await asyncio.Future() 
 
 if __name__ == "__main__":
-    async_run_target = main()
-    asyncio.run(async_run_target)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
