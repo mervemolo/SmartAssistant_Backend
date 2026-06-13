@@ -188,6 +188,28 @@ async def audio_stream_handler(websocket):
         print("\n🔌 ESP32 Bağlantıyı kapattı.")
     finally:
         is_processing = False
+        # --- Bu fonksiyonu main() fonksiyonunun üstüne ekleyin ---
+async def health_check(path, request_headers):
+    # Render, uygulamanın çalışıp çalışmadığını anlamak için HEAD isteği gönderir
+    if path == "/":
+        return None  # WebSocket isteği ise devam et
+    return None # Diğer durumlarda standart davran
+
+# --- main fonksiyonunu bu şekilde güncelleyin ---
+async def main():
+    PORT = int(os.environ.get("PORT", 10000))
+    
+    # process_request parametresi sağlık kontrolü isteklerini yönetir
+    async with websockets.serve(
+        audio_stream_handler, 
+        "0.0.0.0", 
+        PORT,
+        process_request=health_check, 
+        ping_interval=None,
+        ping_timeout=None
+    ):
+        print(f"🚀 Sunucu {PORT} portunda başarıyla başlatıldı!")
+        await asyncio.Future()
 
 async def main():
     PORT = int(os.environ.get("PORT", 10000))
