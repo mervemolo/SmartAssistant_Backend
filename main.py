@@ -138,96 +138,172 @@ async def handle_response_task(websocket, audio_to_process):
 
 async def audio_stream_handler(websocket):
     global is_processing
+
     print(f"\n⚡ ESP32 Asistan Bağlandı! ({websocket.remote_address})")
-    
+
     audio_buffer = bytearray()
     is_speaking = False
     silence_start_time = None
     is_processing = False
-    
+
     print("🎤 Sunucu dinlemede... Konuşmaya başlayabilirsiniz.")
 
     try:
         async for audio_data in websocket:
+
             if is_processing:
                 continue
-                
-            data_chunk = np.frombuffer(audio_data, dtype=np.int16)
-            
+
+            data_chunk = np.frombuffer(
+                audio_data,
+                dtype=np.int16
+            )
+
             if len(data_chunk) > 0:
+
                 energy = int(np.std(data_chunk))
-                
-                print(f"📊 Canlı Ses: {energy:<10} | Eşik: {SILENCE_THRESHOLD} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}", end="\r")
-                
+
+                print(
+                    f"📊 Ses:{energy:<8} | "
+                    f"Eşik:{SILENCE_THRESHOLD} | "
+                    f"{'🗣️ KAYIT' if is_speaking else '💤 SESSİZ'}",
+                    end="\r"
+                )
+
+
+                # konuşma başladı
                 if energy > SILENCE_THRESHOLD:
+
                     if not is_speaking:
+
                         is_speaking = True
-                        print("\n🎙️  Ses algılandı! Eski arka plan gürültüleri temizlendi, yeni kayıt başladı...")
-                        audio_buffer = bytearray()  # 🎯 DÜZELTİLDİ: Konuşma başladığı an depo tamamen sıfırlanır!
-                    
-                    audio_buffer.extend(audio_data)  # Sadece konuşma anındaki veriler eklenir
+
+                        print(
+                            "\n🎙️ Ses algılandı kayıt başladı..."
+                        )
+
+                        audio_buffer.clear()
+
+
+                    audio_buffer.extend(audio_data)
+
                     silence_start_time = None
+
+
+                # sessizlik
                 else:
+
                     if is_speaking:
-                        # 🎯 DÜZELTİLDİ: Konuşma devam ederken aradaki kısa duraksamaları (kelime arası boşlukları) kaydeder
+
                         audio_buffer.extend(audio_data)
-                        
+
+
                         if silence_start_time is None:
+
                             silence_start_time = time.time()
-                        elif time.time() - silence_start_time > SILENCE_DURATION:
-                            print("\n⏱️  Sessizlik algılandı, yanıt hazırlanıyor...")
-                            
+
+
+                        elif (
+                            time.time() -
+                            silence_start_time
+                            > SILENCE_DURATION
+                        ):
+
+                            print(
+                                "\n⏱️ Sessizlik algılandı..."
+                            )
+
+
                             is_processing = True
-                            asyncio.create_task(handle_response_task(websocket, bytes(audio_buffer)))
-                            
-                            audio_buffer = bytearray()
+
+
+                            asyncio.create_task(
+                                handle_response_task(
+                                    websocket,
+                                    bytes(audio_buffer)
+                                )
+                            )
+
+
+                            audio_buffer.clear()
+
                             is_speaking = False
+
                             silence_start_time = None
 
-    except websockets.exceptions.ConnectionClosed:
-        print("\n🔌 ESP32 Bağlantıyı kapattı.")
-    finally:
-        is_processing = False
-        # --- Bu fonksiyonu main() fonksiyonunun üstüne ekleyin ---
-async def health_check(path, request_headers):
-    # Render, uygulamanın çalışıp çalışmadığını anlamak için HEAD isteği gönderir
-    if path == "/":
-        return None  # WebSocket isteği ise devam et
-    return None # Diğer durumlarda standart davran
 
-# --- main fonksiyonunu bu şekilde güncelleyin ---
+
+    except websockets.exceptions.ConnectionClosed:
+
+        print(
+            "\n🔌 ESP32 bağlantıyı kapattı."
+        )
+
+    except Exception as e:
+
+        print(
+            f"\n⚠️ WebSocket hata: {e}"
+        )
+
+    finally:
+
+        is_processing = False
+
+
+
+# ==========================
+# Render Health Check
+# ==========================
+
+async def health_check(
+        path,
+        request_headers
+):
+
+    # Render kontrolü
+    if path == "/":
+
+        return None
+
+    return None
+
+
+
+# ==========================
+# SERVER
+# ==========================
+
 async def main():
-    PORT = int(os.environ.get("PORT", 10000))
-    
-    # process_request parametresi sağlık kontrolü isteklerini yönetir
+
+    PORT = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
+
+
+    print(
+        f"🚀 Server başladı Port:{PORT}"
+    )
+
+
     async with websockets.serve(
-        audio_stream_handler, 
-        "0.0.0.0", 
+        audio_stream_handler,
+        "0.0.0.0",
         PORT,
-        process_request=health_check, 
+
+        # Render için önemli
+        process_request=health_check,
+
         ping_interval=None,
         ping_timeout=None
     ):
-        print(f"🚀 Sunucu {PORT} portunda başarıyla başlatıldı!")
+
         await asyncio.Future()
 
-async def main():
-    PORT = int(os.environ.get("PORT", 10000))
-    
-    # Render'da WebSocket bazen direkt HTTP isteği gibi algılanabilir.
-    # Bu yüzden host'u "0.0.0.0" olarak bırakmak en güvenlisidir.
-    async with websockets.serve(
-        audio_stream_handler, 
-        "0.0.0.0", 
-        PORT,
-        ping_interval=None, # Render'da bağlantı kopmasını engellemek için
-        ping_timeout=None
-    ):
-        print(f"🚀 Sunucu {PORT} portunda başarıyla başlatıldı!")
-        await asyncio.Future() 
+
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+
+    asyncio.run(main())
