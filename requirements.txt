@@ -1,0 +1,7 @@
+websockets
+wave
+numpy
+SpeechRecognition
+gTTS
+pydub
+static-ffmpeg
