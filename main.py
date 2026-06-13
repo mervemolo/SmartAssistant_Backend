@@ -189,14 +189,43 @@ async def audio_stream_handler(websocket):
     finally:
         is_processing = False
 
+async def health_check(path, request_headers):
+    """
+    Render'ın gönderdiği HEAD isteklerini yakalar ve
+    WebSocket bağlantısına düşmeden önce HTTP 200 OK döner.
+    """
+    if "upgrade" not in request_headers.get("Connection", "").lower():
+        return http.HTTPStatus.OK, [], b"OK\n"
+    return None
+
+async def audio_stream_handler(websocket):
+    # Bağlantı yönetimi mantığın buraya
+    try:
+        async for message in websocket:
+            # ... mesaj işleme mantığı ...
+            pass
+    except websockets.exceptions.ConnectionClosed:
+        pass
+
 async def main():
-    # 🎯 BULUT UYUMU: Bulut sunucusunun verdiği dinamik portu oku, yoksa yerelde 8765 kullan
-    PORT = int(os.environ.get("PORT", 8765))
+    # Render tarafından atanan PORT'u al, varsayılan 10000
+    port = int(os.environ.get("PORT", 10000))
     
-    print(f"🚀 Yapay Zeka Asistan Sunucusu Aktif... Port: {PORT}")
-    async with websockets.serve(audio_stream_handler, "0.0.0.0", PORT):
+    # Sunucuyu yapılandır
+    # process_request parametresi ile sağlık kontrolünü devreye alıyoruz
+    async with websockets.serve(
+        audio_stream_handler, 
+        "0.0.0.0", 
+        port,
+        process_request=health_check 
+    ):
+        print(f"🚀 Sunucu {port} portunda yayında.")
+        
+        # Uygulamanın düzgün bir şekilde beklemesini sağlar
         await asyncio.Future()
 
 if __name__ == "__main__":
-    async_run_target = main()
-    asyncio.run(async_run_target)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
