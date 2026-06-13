@@ -1,5 +1,4 @@
 websockets
-wave
 numpy
 SpeechRecognition
 gTTS
