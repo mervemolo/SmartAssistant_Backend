@@ -256,11 +256,12 @@ async def audio_stream_handler(websocket):
 # Render Health Check
 # ==========================
 
-async def health_check(connection, request):
-    # Eğer gelen istek bir WebSocket bağlantı isteği DEĞİLSE (Render'ın düz HTTP kontrolüyse)
-    if "upgrade" not in request.headers.get("connection", "").lower():
-        # Geçerli, hatasız bir HTTP 200 OK yanıtı paketi döndür
-        return connection.respond(http.HTTPStatus.OK, "OK\n")
+async def health_check(path, request_headers):
+    # Eğer gelen istek bir WebSocket yükseltme isteği DEĞİLSE
+    if "upgrade" not in request_headers.get("Connection", "").lower():
+        # Render'ın "yaşıyor musun?" sorgusuna 200 OK yanıtını döndür
+        return http.HTTPStatus.OK, [], b"OK\n"
+    # Eğer WebSocket isteğiyse devam et
     return None
 
 
@@ -270,24 +271,16 @@ async def health_check(connection, request):
 # ==========================
 
 async def main():
-
     PORT = int(os.environ.get("PORT", 10000))
-
     print(f"🚀 Server başladı Port:{PORT}")
 
+    # 2. process_request kısmını buraya ekle
     async with websockets.serve(
-        audio_stream_handler,
-        "0.0.0.0",
+        audio_stream_handler, 
+        "0.0.0.0", 
         PORT,
-        # 🎯 DÜZELTİLDİ: Sağlık kontrolü parametresi güncellendi
-        process_request=health_check,
+        process_request=health_check, # Render'ın HEAD/GET isteklerini artık bu fonksiyon karşılayacak
         ping_interval=None,
         ping_timeout=None
     ):
-        await asyncio.Future()
-
-
-
-if __name__ == "__main__":
-
-    asyncio.run(main())
+        await asyncio.Future() # Sunucuyu sonsuza kadar açık tut
