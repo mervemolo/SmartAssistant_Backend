@@ -265,12 +265,21 @@ async def health_check(path, request_headers):
 
 async def main():
     PORT = int(os.environ.get("PORT", 10000))
-    # process_request parametresi ekleyerek HEAD sorgularını yönetiyoruz
+    print(f"🚀 Sunucu {PORT} portunda başlatılıyor...")
+    
+    # Sunucuyu tanımla
     async with websockets.serve(
         audio_stream_handler, 
         "0.0.0.0", 
         PORT,
         process_request=health_check 
     ):
-        print(f"🚀 Sunucu {PORT} portunda çalışıyor")
-        await asyncio.Future()
+        print(f"✅ WebSocket sunucusu {PORT} portunda yayında!")
+        # BURASI ÇOK ÖNEMLİ: Uygulamanın kapanmaması için sonsuza kadar beklet
+        await asyncio.Future() 
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        print(f"CRITICAL ERROR: {e}")
