@@ -108,7 +108,7 @@ async def handle_response_task(websocket, audio_to_process):
             raw_pcm_bytes = prepare_audio_for_esp32(reply_wav)
             
             print("📤 Cevap sesi aktarılıyor...")
-            chunk_size = 4096  
+            chunk_size = 8192  
             start_transmission_time = time.time()
             
             for i in range(0, len(raw_pcm_bytes), chunk_size):
@@ -137,6 +137,8 @@ async def handle_response_task(websocket, audio_to_process):
         print("\n🎤 Yeniden Dinleniyor...\n")
 
 async def audio_stream_handler(websocket):
+    if websocket.request_headers.get("Upgrade") != "websocket":
+        return
     global is_processing
     print(f"\n⚡ ESP32 Asistan Bağlandı! ({websocket.remote_address})")
     
