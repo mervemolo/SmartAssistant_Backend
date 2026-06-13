@@ -8,6 +8,7 @@ import time
 import io                           
 from gtts import gTTS               
 from pydub import AudioSegment  
+import http
 
 import static_ffmpeg
 static_ffmpeg.add_paths()    
@@ -255,16 +256,13 @@ async def audio_stream_handler(websocket):
 # Render Health Check
 # ==========================
 
-async def health_check(
-        path,
-        request_headers
-):
-
-    # Render kontrolü
-    if path == "/":
-
-        return None
-
+async def health_check(path, request_headers):
+    # Eğer gelen istek bir WebSocket isteği değilse (Render'ın HEAD isteği ise)
+    if "Upgrade" not in request_headers:
+        # Hata fırlatmak yerine "200 OK" HTTP cevabı döndürerek Render'ı memnun et
+        return http.HTTPStatus.OK, [], b"OK\n"
+    
+    # WebSocket isteği ise bağlantıya izin ver
     return None
 
 
