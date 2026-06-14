@@ -9,6 +9,7 @@ from gtts import gTTS
 from pydub import AudioSegment
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
+import time
 
 import static_ffmpeg
 static_ffmpeg.add_paths()
@@ -21,6 +22,8 @@ SILENCE_THRESHOLD = 1200
 SILENCE_DURATION = 1.5
 
 is_processing = False
+
+last_print = 0
 # ===================================================
 
 app = FastAPI()
@@ -165,9 +168,13 @@ async def audio_stream_handler(websocket: WebSocket):
                 
             data_chunk = np.frombuffer(audio_data, dtype=np.int16)
             
-            if len(data_chunk) > 0:
-                energy = int(np.std(data_chunk))
-                print(f"📊 Canlı Ses: {energy:<10} | Eşik: {SILENCE_THRESHOLD} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}", end="\r")
+           if len(data_chunk) > 0:
+    energy = int(np.std(data_chunk))
+    
+    # Sadece 0.5 saniyede bir yazdır
+    if time.time() - last_print_time > 0.5:
+        print(f"📊 Ses: {energy:<5} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}    ", end="\r")
+        last_print_time = time.time()
                 
                 if energy > SILENCE_THRESHOLD:
                     if not is_speaking:
