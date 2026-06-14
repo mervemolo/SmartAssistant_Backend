@@ -16,16 +16,14 @@ static_ffmpeg.add_paths()
 # ================= KÜRESEL AYARLAR =================
 SAMPLE_RATE = 16000
 CHANNELS = 1
-SILENCE_THRESHOLD = 500  # Eşiği biraz yükselttik, gürültüyü ses sanmasın
-SILENCE_DURATION = 1.8
-
-is_processing = False
+SILENCE_THRESHOLD = 500  # Gürültü eşiği
+SILENCE_DURATION = 1.5    # Daha hızlı tepki için 1.5 saniye
 
 app = FastAPI()
 
 def generate_ai_response(user_text):
     user_text = user_text.lower()
-    if "merhaba" in user_text or "selam" in user_text:
+    if any(word in user_text for word in ["merhaba", "selam"]):
         return "Merhaba! Sana nasıl yardımcı olabilirim?"
     elif "nasılsın" in user_text:
         return "Harikayım, teşekkür ederim! Sen nasılsın?"
@@ -42,7 +40,6 @@ def process_audio_in_memory(raw_bytes):
     return mem_file
 
 async def handle_response_task(websocket: WebSocket, audio_to_process: bytes):
-    global is_processing
     try:
         audio_stream = process_audio_in_memory(audio_to_process)
         recognizer = sr.Recognizer()
@@ -54,51 +51,49 @@ async def handle_response_task(websocket: WebSocket, audio_to_process: bytes):
 
             ai_reply = generate_ai_response(user_text)
             
-            # Ses oluşturma
+            # TTS işlemi
             tts = gTTS(text=ai_reply, lang='tr', slow=False)
             fp = io.BytesIO()
             tts.write_to_fp(fp)
             fp.seek(0)
             
+            # Ses formatını ESP32'nin istediği PCM (16kHz, 1 kanal) formatına getir
             audio = AudioSegment.from_file(fp, format="mp3")
-            pcm_data = audio.set_frame_rate(16000).set_channels(1).raw_data
+            pcm_data = audio.set_frame_rate(SAMPLE_RATE).set_channels(1).raw_data
             
-            # Streaming - Paketleri 2048'er byte gönder
+            # Cevabı parçalar halinde gönder
             for i in range(0, len(pcm_data), 2048):
                 await websocket.send_bytes(pcm_data[i:i+2048])
                 await asyncio.sleep(0.01)
+            
+            # Konuşma bitti sinyali
             await websocket.send_text("STOP")
             print("✅ Cevap iletildi ve STOP sinyali gönderildi.")
                 
     except Exception as e:
         print(f"\n⚠️ İşlem hatası: {e}")
-    finally:
-        is_processing = False
 
 @app.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("⚡ ESP32 Bağlandı ve hazır!")
+    print("⚡ ESP32 Bağlandı!")
     
-    global is_processing
+    is_processing = False
     audio_buffer = bytearray()
     is_speaking = False
     silence_start_time = None
     
     try:
         while True:
-            # Buradaki timeout, bağlantının kopmasını engeller
-            audio_data = await asyncio.wait_for(websocket.receive_bytes(), timeout=60.0)
+            # WebSocket'ten veri al
+            audio_data = await websocket.receive_bytes()
             
-            # --- DEBUG: Veri akıyor mu? ---
-            # Render loglarında bu satırı görürsen sunucu veriyi alıyor demektir.
+            # --- DEBUG: Veri akışını izlemek için ---
             # print(f"DEBUG: {len(audio_data)} byte alındı.", end="\r")
 
             if is_processing: continue
             
             data_chunk = np.frombuffer(audio_data, dtype=np.int16)
-            if len(data_chunk) == 0: continue
-            
             energy = int(np.std(data_chunk))
             
             if energy > SILENCE_THRESHOLD:
@@ -114,16 +109,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif time.time() - silence_start_time > SILENCE_DURATION:
                     print("\n⏱️ Sessizlik algılandı, işlem başlıyor...")
                     is_processing = True
+                    # İşlemi arka planda başlat (await etme ki loop devam etsin)
                     asyncio.create_task(handle_response_task(websocket, bytes(audio_buffer)))
                     is_speaking = False
                     audio_buffer = bytearray()
+                    is_processing = False # Hemen serbest bırak
                         
-    except asyncio.TimeoutError:
-        print("\n⏳ Bağlantı zaman aşımı (ping yok).")
     except WebSocketDisconnect:
         print("\n🔌 Bağlantı koptu.")
     except Exception as e:
-        print(f"\n⚠️ Hata: {e}")
+        print(f"\n⚠️ WebSocket hatası: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
