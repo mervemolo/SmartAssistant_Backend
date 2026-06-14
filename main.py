@@ -1,20 +1,19 @@
 import asyncio
-import websockets
 import wave
 import numpy as np
 import speech_recognition as sr
 import os
 import time
 import io
-import http
-import logging # 🎯 YENİ: Hata loglarını filtrelemek için eklendi
 from gtts import gTTS
 from pydub import AudioSegment
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import uvicorn
 
 import static_ffmpeg
 static_ffmpeg.add_paths()
 
-# ================= GÜNCELLENEN KÜRESEL AYARLAR =================
+# ================= KÜRESEL AYARLAR =================
 SAMPLE_RATE = 16000
 CHANNELS = 1
 
@@ -22,24 +21,19 @@ SILENCE_THRESHOLD = 1200
 SILENCE_DURATION = 1.5
 
 is_processing = False
-# ===============================================================
+# ===================================================
 
-# 🎯 YENİ: Render'ın HEAD isteklerinin yarattığı devasa hata mesajlarını terminalden gizleyen filtre
-class IgnoreHeadRequestsFilter(logging.Filter):
-    def filter(self, record):
-        if record.exc_info:
-            exc_type, exc_value, _ = record.exc_info
-            error_msg = str(exc_value)
-            # Eğer hata HEAD isteğinden veya geçersiz HTTP formatından kaynaklanıyorsa logu gizle
-            if "expected GET; got HEAD" in error_msg or "did not receive a valid HTTP request" in error_msg or "connection closed" in error_msg:
-                return False
-        return True
+app = FastAPI()
 
-# Filtreyi websockets sunucusuna uygula
-ws_logger = logging.getLogger("websockets.server")
-ws_logger.addFilter(IgnoreHeadRequestsFilter())
-ws_logger.setLevel(logging.ERROR) # Sadece gerçekten kritik hataları göster
+# 🎯 YENİ: RENDER HEALTH CHECK İÇİN HTTP ROTALARI (Sorunu çözen kısım)
+@app.get("/")
+@app.head("/")
+@app.get("/health")
+@app.head("/health")
+async def health_check():
+    return {"status": "Service is live and waiting for WebSocket connection!"}
 
+# --- Senin Orijinal Ses İşleme Fonksiyonların ---
 def generate_ai_response(user_text):
     user_text = user_text.lower()
     if "merhaba" in user_text or "selam" in user_text:
@@ -56,15 +50,12 @@ def generate_ai_response(user_text):
 def generate_tts_audio(text):
     filename = "cevap.wav"
     tts = gTTS(text=text, lang='tr', slow=False)
-    
     mp3_data = io.BytesIO()
     tts.write_to_fp(mp3_data)
     mp3_data.seek(0)
-    
     sound = AudioSegment.from_file(mp3_data, format="mp3")
     sound = sound.set_frame_rate(16000).set_channels(1).set_sample_width(2)
     sound.export(filename, format="wav")
-    
     return filename
 
 def prepare_audio_for_esp32(wav_filename):
@@ -73,23 +64,18 @@ def prepare_audio_for_esp32(wav_filename):
         n_channels = wf.getnchannels()
         frames = wf.readframes(wf.getnframes())
         data = np.frombuffer(frames, dtype=np.int16)
-    
     if n_channels == 2:
         data = (data[0::2] // 2 + data[1::2] // 2)
-    
     if framerate != 16000:
         old_indices = np.arange(len(data))
         new_indices = np.linspace(0, len(data) - 1, int(len(data) * 16000 / framerate))
         data = np.interp(new_indices, old_indices, data).astype(np.int16)
-    
     return data.tobytes()
 
 def process_and_save_audio(raw_bytes):
     if len(raw_bytes) == 0:
         return None
-    
     audio_data16 = np.frombuffer(raw_bytes, dtype=np.int16)
-    
     filename = "canli_kayit.wav"
     with wave.open(filename, "wb") as wf:
         wf.setnchannels(CHANNELS)
@@ -112,7 +98,7 @@ def convert_speech_to_text(filename):
             print(f"\n⚠️  Google STT Servis hatası: {e}")
     return None
 
-async def handle_response_task(websocket, audio_to_process):
+async def handle_response_task(websocket: WebSocket, audio_to_process: bytes):
     global is_processing
     try:
         wav_file = process_and_save_audio(audio_to_process)
@@ -131,7 +117,7 @@ async def handle_response_task(websocket, audio_to_process):
             
             for i in range(0, len(raw_pcm_bytes), chunk_size):
                 chunk = raw_pcm_bytes[i:i+chunk_size]
-                await websocket.send(chunk)
+                await websocket.send_bytes(chunk) # YENİ: FastAPI metodu
                 await asyncio.sleep(0.100) 
                 
             print("✅ Ses gönderme tamamlandı.")
@@ -141,7 +127,7 @@ async def handle_response_task(websocket, audio_to_process):
             kalan_bekleme = (gercek_ses_suresi + 1.2) - gecen_sure
             
             if kalan_bekleme > 0:
-                print(f"⏳ Asistanın konuşması bitiyor, donanım senkronizasyonu için {kalan_bekleme:.2f} saniye bekleniyor...")
+                print(f"⏳ Asistanın konuşması bitiyor, {kalan_bekleme:.2f} sn bekleniyor...")
                 await asyncio.sleep(kalan_bekleme)
                 
         else:
@@ -153,9 +139,12 @@ async def handle_response_task(websocket, audio_to_process):
         is_processing = False
         print("\n🎤 Yeniden Dinleniyor...\n")
 
-async def audio_stream_handler(websocket):
+# 🎯 YENİ: ESP32'nin bağlanacağı asıl WebSocket rotası
+@app.websocket("/ws")
+async def audio_stream_handler(websocket: WebSocket):
     global is_processing
-    print(f"\n⚡ ESP32 Asistan Bağlandı! ({websocket.remote_address})")
+    await websocket.accept()
+    print("\n⚡ ESP32 Asistan Bağlandı!")
     
     audio_buffer = bytearray()
     is_speaking = False
@@ -165,7 +154,9 @@ async def audio_stream_handler(websocket):
     print("🎤 Sunucu dinlemede... Konuşmaya başlayabilirsiniz.")
 
     try:
-        async for audio_data in websocket:
+        while True:
+            audio_data = await websocket.receive_bytes() # YENİ: FastAPI metodu
+            
             if is_processing:
                 continue
                 
@@ -173,13 +164,12 @@ async def audio_stream_handler(websocket):
             
             if len(data_chunk) > 0:
                 energy = int(np.std(data_chunk))
-                
                 print(f"📊 Canlı Ses: {energy:<10} | Eşik: {SILENCE_THRESHOLD} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}", end="\r")
                 
                 if energy > SILENCE_THRESHOLD:
                     if not is_speaking:
                         is_speaking = True
-                        print("\n🎙️  Ses algılandı! Eski arka plan gürültüleri temizlendi, yeni kayıt başladı...")
+                        print("\n🎙️  Ses algılandı! Yeni kayıt başladı...")
                         audio_buffer = bytearray()
                     
                     audio_buffer.extend(audio_data)
@@ -192,7 +182,6 @@ async def audio_stream_handler(websocket):
                             silence_start_time = time.time()
                         elif time.time() - silence_start_time > SILENCE_DURATION:
                             print("\n⏱️  Sessizlik algılandı, yanıt hazırlanıyor...")
-                            
                             is_processing = True
                             asyncio.create_task(handle_response_task(websocket, bytes(audio_buffer)))
                             
@@ -200,32 +189,14 @@ async def audio_stream_handler(websocket):
                             is_speaking = False
                             silence_start_time = None
 
-    except websockets.exceptions.ConnectionClosed:
+    except WebSocketDisconnect:
         print("\n🔌 ESP32 Bağlantıyı kapattı.")
     except Exception as e:
-        pass # Diğer kritik olmayan bağlantı kopmalarını yoksay
+        print(f"Bilinmeyen bağlantı hatası: {e}")
     finally:
         is_processing = False
 
-def health_check(connection, request):
-    # Eğer Render nadiren de olsa GET isteği ile sağlık kontrolü yaparsa yanıt ver
-    if request.headers.get("Upgrade", "").lower() != "websocket":
-        return connection.respond(http.HTTPStatus.OK, "OK\n")
-    return None
-
-async def main():
-    PORT = int(os.environ.get("PORT", 8765))
-    print(f"🚀 Yapay Zeka Asistan Sunucusu Aktif... Port: {PORT}")
-    
-    async with websockets.serve(
-        audio_stream_handler, 
-        "0.0.0.0", 
-        PORT,
-        process_request=health_check, 
-        ping_interval=20,     
-        ping_timeout=20
-    ):
-        await asyncio.Future()
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    PORT = int(os.environ.get("PORT", 3000))
+    print(f"🚀 Uvicorn Sunucusu Aktif... Port: {PORT}")
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
