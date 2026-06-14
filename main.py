@@ -140,7 +140,10 @@ async def handle_response_task(websocket: WebSocket, audio_to_process: bytes):
         print("\n🎤 Yeniden Dinleniyor...\n")
 
 # 🎯 YENİ: ESP32'nin bağlanacağı asıl WebSocket rotası
-@app.websocket("/ws")
+@app.websocket("/")
+async def websocket_root_handler(websocket: WebSocket):
+    # Bu, doğrudan / adresine gelen istekleri asıl işleyiciye yönlendirir
+    await audio_stream_handler(websocket)
 async def audio_stream_handler(websocket: WebSocket):
     global is_processing
     await websocket.accept()
