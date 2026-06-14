@@ -67,6 +67,8 @@ async def handle_response_task(websocket: WebSocket, audio_to_process: bytes):
             for i in range(0, len(pcm_data), 2048):
                 await websocket.send_bytes(pcm_data[i:i+2048])
                 await asyncio.sleep(0.01)
+            await websocket.send_text("STOP")
+            print("✅ Cevap iletildi ve STOP sinyali gönderildi.")
                 
     except Exception as e:
         print(f"\n⚠️ İşlem hatası: {e}")
