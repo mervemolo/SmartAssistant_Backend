@@ -5,12 +5,13 @@ import numpy as np
 import speech_recognition as sr
 import os
 import time
-import io                           
-from gtts import gTTS               
-from pydub import AudioSegment  
+import io
+import http  # 🎯 YENİ: HTTP durum kodları için eklendi
+from gtts import gTTS
+from pydub import AudioSegment
 
 import static_ffmpeg
-static_ffmpeg.add_paths()    
+static_ffmpeg.add_paths()
 
 # ================= GÜNCELLENEN KÜRESEL AYARLAR =================
 SAMPLE_RATE = 16000  # AI modellerinin ve ESP32'nin ortak frekansı (16kHz)
@@ -30,7 +31,7 @@ def generate_ai_response(user_text):
         return "Harikayım, teşekkür ederim! Sen nasılsın?"
     elif "kimsin" in user_text:
         return "Ben senin E S P 32 tabanlı akıllı asistanınım."
-    elif "Işığı aç" in user_text:
+    elif "ışığı aç" in user_text:
         return "Anlaşıldı, ışıkları hemen açıyorum."
     else:
         return f"{user_text} dediğini duydum ama bunu henüz yapamıyorum."
@@ -137,8 +138,7 @@ async def handle_response_task(websocket, audio_to_process):
         print("\n🎤 Yeniden Dinleniyor...\n")
 
 async def audio_stream_handler(websocket):
-    if websocket.request_headers.get("Upgrade") != "websocket":
-        return
+    # (İçerideki Upgrade kontrolü kaldırıldı, kapıdaki kontrol işi halledecek)
     global is_processing
     print(f"\n⚡ ESP32 Asistan Bağlandı! ({websocket.remote_address})")
     
@@ -165,13 +165,12 @@ async def audio_stream_handler(websocket):
                     if not is_speaking:
                         is_speaking = True
                         print("\n🎙️  Ses algılandı! Eski arka plan gürültüleri temizlendi, yeni kayıt başladı...")
-                        audio_buffer = bytearray()  # 🎯 DÜZELTİLDİ: Konuşma başladığı an depo tamamen sıfırlanır!
+                        audio_buffer = bytearray()
                     
-                    audio_buffer.extend(audio_data)  # Sadece konuşma anındaki veriler eklenir
+                    audio_buffer.extend(audio_data)
                     silence_start_time = None
                 else:
                     if is_speaking:
-                        # 🎯 DÜZELTİLDİ: Konuşma devam ederken aradaki kısa duraksamaları (kelime arası boşlukları) kaydeder
                         audio_buffer.extend(audio_data)
                         
                         if silence_start_time is None:
@@ -191,12 +190,28 @@ async def audio_stream_handler(websocket):
     finally:
         is_processing = False
 
+# 🎯 YENİ: Render'ın Sağlık Kontrolünü (Health Check) Kapıda Karşılama Fonksiyonu
+def health_check(connection, request):
+    # Eğer gelen istek "HEAD" ise veya bir WebSocket bağlantısı değilse, 200 OK döndür.
+    if request.method == "HEAD" or request.headers.get("Upgrade", "").lower() != "websocket":
+        return connection.respond(http.HTTPStatus.OK, "OK\n")
+    # Eğer gerçekten WebSocket bağlantısıysa (ESP32 ise), None döndür ve bağlantıya izin ver.
+    return None
+
 async def main():
-    # 🎯 BULUT UYUMU: Bulut sunucusunun verdiği dinamik portu oku, yoksa yerelde 8765 kullan
     PORT = int(os.environ.get("PORT", 8765))
     
     print(f"🚀 Yapay Zeka Asistan Sunucusu Aktif... Port: {PORT}")
-    async with websockets.serve(audio_stream_handler, "0.0.0.0", PORT):
+    
+    # 🎯 YENİ: process_request parametresi ile health_check eklendi
+    async with websockets.serve(
+        audio_stream_handler, 
+        "0.0.0.0", 
+        PORT,
+        process_request=health_check, 
+        ping_interval=20,     # Bağlantının canlı kalmasını sağlar
+        ping_timeout=20
+    ):
         await asyncio.Future()
 
 if __name__ == "__main__":
