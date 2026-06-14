@@ -17,7 +17,7 @@ static_ffmpeg.add_paths()
 SAMPLE_RATE = 16000
 CHANNELS = 1
 
-SILENCE_THRESHOLD = 1200   
+SILENCE_THRESHOLD = 200   
 SILENCE_DURATION = 1.5
 
 is_processing = False
