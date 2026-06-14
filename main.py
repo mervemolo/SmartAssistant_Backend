@@ -6,7 +6,8 @@ import speech_recognition as sr
 import os
 import time
 import io
-import http  # 🎯 YENİ: HTTP durum kodları için eklendi
+import http
+import logging # 🎯 YENİ: Hata loglarını filtrelemek için eklendi
 from gtts import gTTS
 from pydub import AudioSegment
 
@@ -14,14 +15,30 @@ import static_ffmpeg
 static_ffmpeg.add_paths()
 
 # ================= GÜNCELLENEN KÜRESEL AYARLAR =================
-SAMPLE_RATE = 16000  # AI modellerinin ve ESP32'nin ortak frekansı (16kHz)
-CHANNELS = 1         # Mono (Tek Kanal)
+SAMPLE_RATE = 16000
+CHANNELS = 1
 
 SILENCE_THRESHOLD = 1200   
-SILENCE_DURATION = 1.5     # Konuşma sonrası beklenecek sessizlik (saniye)
+SILENCE_DURATION = 1.5
 
 is_processing = False
 # ===============================================================
+
+# 🎯 YENİ: Render'ın HEAD isteklerinin yarattığı devasa hata mesajlarını terminalden gizleyen filtre
+class IgnoreHeadRequestsFilter(logging.Filter):
+    def filter(self, record):
+        if record.exc_info:
+            exc_type, exc_value, _ = record.exc_info
+            error_msg = str(exc_value)
+            # Eğer hata HEAD isteğinden veya geçersiz HTTP formatından kaynaklanıyorsa logu gizle
+            if "expected GET; got HEAD" in error_msg or "did not receive a valid HTTP request" in error_msg or "connection closed" in error_msg:
+                return False
+        return True
+
+# Filtreyi websockets sunucusuna uygula
+ws_logger = logging.getLogger("websockets.server")
+ws_logger.addFilter(IgnoreHeadRequestsFilter())
+ws_logger.setLevel(logging.ERROR) # Sadece gerçekten kritik hataları göster
 
 def generate_ai_response(user_text):
     user_text = user_text.lower()
@@ -119,7 +136,6 @@ async def handle_response_task(websocket, audio_to_process):
                 
             print("✅ Ses gönderme tamamlandı.")
             
-            # Donanımsal Koruma Zaman Kilidi
             gercek_ses_suresi = len(raw_pcm_bytes) / 32000.0
             gecen_sure = time.time() - start_transmission_time
             kalan_bekleme = (gercek_ses_suresi + 1.2) - gecen_sure
@@ -138,7 +154,6 @@ async def handle_response_task(websocket, audio_to_process):
         print("\n🎤 Yeniden Dinleniyor...\n")
 
 async def audio_stream_handler(websocket):
-    # (İçerideki Upgrade kontrolü kaldırıldı, kapıdaki kontrol işi halledecek)
     global is_processing
     print(f"\n⚡ ESP32 Asistan Bağlandı! ({websocket.remote_address})")
     
@@ -187,33 +202,30 @@ async def audio_stream_handler(websocket):
 
     except websockets.exceptions.ConnectionClosed:
         print("\n🔌 ESP32 Bağlantıyı kapattı.")
+    except Exception as e:
+        pass # Diğer kritik olmayan bağlantı kopmalarını yoksay
     finally:
         is_processing = False
 
-# 🎯 YENİ: Render'ın Sağlık Kontrolünü (Health Check) Kapıda Karşılama Fonksiyonu
 def health_check(connection, request):
-    # Eğer gelen istek "HEAD" ise veya bir WebSocket bağlantısı değilse, 200 OK döndür.
-    if request.method == "HEAD" or request.headers.get("Upgrade", "").lower() != "websocket":
+    # Eğer Render nadiren de olsa GET isteği ile sağlık kontrolü yaparsa yanıt ver
+    if request.headers.get("Upgrade", "").lower() != "websocket":
         return connection.respond(http.HTTPStatus.OK, "OK\n")
-    # Eğer gerçekten WebSocket bağlantısıysa (ESP32 ise), None döndür ve bağlantıya izin ver.
     return None
 
 async def main():
     PORT = int(os.environ.get("PORT", 8765))
-    
     print(f"🚀 Yapay Zeka Asistan Sunucusu Aktif... Port: {PORT}")
     
-    # 🎯 YENİ: process_request parametresi ile health_check eklendi
     async with websockets.serve(
         audio_stream_handler, 
         "0.0.0.0", 
         PORT,
         process_request=health_check, 
-        ping_interval=20,     # Bağlantının canlı kalmasını sağlar
+        ping_interval=20,     
         ping_timeout=20
     ):
         await asyncio.Future()
 
 if __name__ == "__main__":
-    async_run_target = main()
-    asyncio.run(async_run_target)
+    asyncio.run(main())
