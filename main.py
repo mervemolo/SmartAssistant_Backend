@@ -9,7 +9,6 @@ from gtts import gTTS
 from pydub import AudioSegment
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
-import time
 
 import static_ffmpeg
 static_ffmpeg.add_paths()
@@ -22,13 +21,11 @@ SILENCE_THRESHOLD = 1200
 SILENCE_DURATION = 1.5
 
 is_processing = False
-
-last_print = 0
 # ===================================================
 
 app = FastAPI()
 
-# 🎯 YENİ: RENDER HEALTH CHECK İÇİN HTTP ROTALARI (Sorunu çözen kısım)
+# 🎯 RENDER HEALTH CHECK İÇİN HTTP ROTALARI
 @app.get("/")
 @app.head("/")
 @app.get("/health")
@@ -36,7 +33,7 @@ app = FastAPI()
 async def health_check():
     return {"status": "Service is live and waiting for WebSocket connection!"}
 
-# --- Senin Orijinal Ses İşleme Fonksiyonların ---
+# --- Ses İşleme Fonksiyonları ---
 def generate_ai_response(user_text):
     user_text = user_text.lower()
     if "merhaba" in user_text or "selam" in user_text:
@@ -120,7 +117,7 @@ async def handle_response_task(websocket: WebSocket, audio_to_process: bytes):
             
             for i in range(0, len(raw_pcm_bytes), chunk_size):
                 chunk = raw_pcm_bytes[i:i+chunk_size]
-                await websocket.send_bytes(chunk) # YENİ: FastAPI metodu
+                await websocket.send_bytes(chunk)
                 await asyncio.sleep(0.100) 
                 
             print("✅ Ses gönderme tamamlandı.")
@@ -142,11 +139,10 @@ async def handle_response_task(websocket: WebSocket, audio_to_process: bytes):
         is_processing = False
         print("\n🎤 Yeniden Dinleniyor...\n")
 
-# 🎯 YENİ: ESP32'nin bağlanacağı asıl WebSocket rotası
 @app.websocket("/")
 async def websocket_root_handler(websocket: WebSocket):
-    # Bu, doğrudan / adresine gelen istekleri asıl işleyiciye yönlendirir
     await audio_stream_handler(websocket)
+
 async def audio_stream_handler(websocket: WebSocket):
     global is_processing
     await websocket.accept()
@@ -156,53 +152,55 @@ async def audio_stream_handler(websocket: WebSocket):
     is_speaking = False
     silence_start_time = None
     is_processing = False
+    last_print_time = time.time() # Hata Düzeltme: Zamanlayıcı yerel olarak tanımlandı
     
     print("🎤 Sunucu dinlemede... Konuşmaya başlayabilirsiniz.")
 
     try:
         while True:
-            audio_data = await websocket.receive_bytes() # YENİ: FastAPI metodu
+            audio_data = await websocket.receive_bytes()
             
             if is_processing:
                 continue
                 
             data_chunk = np.frombuffer(audio_data, dtype=np.int16)
+            energy = 0 # Hata Düzeltme: Çökmeyi önlemek için varsayılan değer atandı
             
             if len(data_chunk) > 0:
                 energy = int(np.std(data_chunk))
     
-    # Sadece 0.5 saniyede bir yazdır
+            # Hata Düzeltme: Girintiler ve değişken adı senkronize edildi
             if time.time() - last_print_time > 0.5:
-             print(f"📊 Ses: {energy:<5} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}    ", end="\r")
-             last_print_time = time.time()
+                print(f"📊 Ses: {energy:<5} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}    ", end="\r")
+                last_print_time = time.time()
                 
             if energy > SILENCE_THRESHOLD:
-                    if not is_speaking:
-                        is_speaking = True
-                        print("\n🎙️  Ses algılandı! Yeni kayıt başladı...")
-                        audio_buffer = bytearray()
-                    
-                    audio_buffer.extend(audio_data)
-                    silence_start_time = None
+                if not is_speaking:
+                    is_speaking = True
+                    print("\n🎙️  Ses algılandı! Yeni kayıt başladı...")
+                    audio_buffer = bytearray()
+                
+                audio_buffer.extend(audio_data)
+                silence_start_time = None
             else:
-                    if is_speaking:
-                        audio_buffer.extend(audio_data)
+                if is_speaking:
+                    audio_buffer.extend(audio_data)
+                    
+                    if silence_start_time is None:
+                        silence_start_time = time.time()
+                    elif time.time() - silence_start_time > SILENCE_DURATION:
+                        print("\n⏱️  Sessizlik algılandı, yanıt hazırlanıyor...")
+                        is_processing = True
+                        asyncio.create_task(handle_response_task(websocket, bytes(audio_buffer)))
                         
-                        if silence_start_time is None:
-                            silence_start_time = time.time()
-                        elif time.time() - silence_start_time > SILENCE_DURATION:
-                            print("\n⏱️  Sessizlik algılandı, yanıt hazırlanıyor...")
-                            is_processing = True
-                            asyncio.create_task(handle_response_task(websocket, bytes(audio_buffer)))
-                            
-                            audio_buffer = bytearray()
-                            is_speaking = False
-                            silence_start_time = None
+                        audio_buffer = bytearray()
+                        is_speaking = False
+                        silence_start_time = None
 
     except WebSocketDisconnect:
         print("\n🔌 ESP32 Bağlantıyı kapattı.")
     except Exception as e:
-        print(f"Bilinmeyen bağlantı hatası: {e}")
+        print(f"\n⚠️ Bilinmeyen bağlantı hatası: {e}")
     finally:
         is_processing = False
 
