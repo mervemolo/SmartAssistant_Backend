@@ -168,15 +168,15 @@ async def audio_stream_handler(websocket: WebSocket):
                 
             data_chunk = np.frombuffer(audio_data, dtype=np.int16)
             
-           if len(data_chunk) > 0:
-    energy = int(np.std(data_chunk))
+            if len(data_chunk) > 0:
+                energy = int(np.std(data_chunk))
     
     # Sadece 0.5 saniyede bir yazdır
-    if time.time() - last_print_time > 0.5:
-        print(f"📊 Ses: {energy:<5} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}    ", end="\r")
-        last_print_time = time.time()
+            if time.time() - last_print_time > 0.5:
+             print(f"📊 Ses: {energy:<5} | Durum: {'🗣️ KAYITTA' if is_speaking else '💤 SESSİZ'}    ", end="\r")
+             last_print_time = time.time()
                 
-                if energy > SILENCE_THRESHOLD:
+            if energy > SILENCE_THRESHOLD:
                     if not is_speaking:
                         is_speaking = True
                         print("\n🎙️  Ses algılandı! Yeni kayıt başladı...")
@@ -184,7 +184,7 @@ async def audio_stream_handler(websocket: WebSocket):
                     
                     audio_buffer.extend(audio_data)
                     silence_start_time = None
-                else:
+            else:
                     if is_speaking:
                         audio_buffer.extend(audio_data)
                         
