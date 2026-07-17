@@ -45,11 +45,11 @@ def generate_ai_response(text):
 
 
     if "merhaba" in text or "selam" in text:
-        return "Merhaba! Sana nasıl yardımcı olabilirim?"
+        return "Merhaba Mehmet! Sana nasıl yardımcı olabilirim?"
 
 
     elif "nasılsın" in text:
-        return "Harikayım teşekkür ederim."
+        return "Harikayım Mehmetcim teşekkür ederim.Sen Nasılsın"
 
 
     elif "kimsin" in text:
