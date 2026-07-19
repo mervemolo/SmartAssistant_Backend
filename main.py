@@ -65,8 +65,9 @@ async def generate_ai_response(text):
         
         # 'gemini-1.5-flash' kotası daha geniş olduğu için bunu tercih ettim, 2.0 yapabilirsin
         response = await client.aio.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt,
+                    model='gemini-2.0-flash',
+                    contents=prompt,
+        )
         )
         
         # Gelen yanıttaki markdown işaretlerini temizle (TTS'in garip sesler çıkarmasını önler)
