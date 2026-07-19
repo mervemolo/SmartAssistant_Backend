@@ -16,20 +16,20 @@ import static_ffmpeg
 static_ffmpeg.add_paths()
 
 # =========================
-# GEMINI AI AYARLARI 
+# GROQ AI AYARLARI (Ücretsiz & Sınırsız)
 # =========================
-from google import genai
+from openai import AsyncOpenAI
 
-# Ortam değişkeninden API anahtarını çekiyoruz
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
-# Yeni nesil GenAI istemcisini başlatıyoruz
-if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+if GROQ_API_KEY:
+    client = AsyncOpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=GROQ_API_KEY,
+    )
 else:
     client = None
-    print("⚠️ UYARI: GEMINI_API_KEY bulunamadı! Lütfen ortam değişkenlerini kontrol edin.")
-
+    print("⚠️ UYARI: GROQ_API_KEY bulunamadı!")
 
 # =========================
 # AYARLAR
@@ -41,36 +41,35 @@ SILENCE_THRESHOLD = 500
 SILENCE_DURATION = 1.5
 
 app = FastAPI()
-
-# Aynı anda tek konuşma
 is_processing = False
 
 
 # =========================
-# AI CEVAP (GEMINI)
+# AI CEVAP (GROQ / Llama 3)
 # =========================
 async def generate_ai_response(text):
     if not client:
         return "Üzgünüm, yapay zeka anahtarı ayarlanmamış."
         
     try:
-        # Asistana kim olduğunu ve nasıl yanıt vereceğini belirten sistem komutu (Prompt)
-        prompt = (
-            "Sen Mehmet'in ESP32 tabanlı akıllı ev asistanısın. "
-            "Yanıtların her zaman çok kısa, öz ve günlük konuşma dilinde olmalı. "
-            "Sesli asistan olduğun için uzun listeler veya karmaşık cümleler kurma. "
-            "Maksimum 1 veya 2 cümle ile cevap ver. "
-            f"Kullanıcının söylediği: {text}"
+        response = await client.chat.completions.create(
+            model="llama-3.3-70b-versatile", # Groq'un süper hızlı ücretsiz modeli
+            messages=[
+                {
+                    "role": "system", 
+                    "content": (
+                        "Sen Mehmet'in ESP32 tabanlı akıllı ev asistanısın. "
+                        "Yanıtların her zaman çok kısa, öz ve günlük konuşma dilinde olmalı. "
+                        "Sesli asistan olduğun için uzun listeler veya karmaşık cümleler kurma. "
+                        "Maksimum 1 veya 2 cümle ile cevap ver."
+                    )
+                },
+                {"role": "user", "content": text}
+            ]
         )
         
-        # HATA DÜZELTİLDİ: Fazla parantez kaldırıldı ve kararlı asenkron model çağrısı yapıldı
-        response = await client.aio.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=prompt,
-        )
-        
-        # Gelen yanıttaki markdown işaretlerini temizle
-        clean_text = response.text.replace("*", "").replace("#", "").replace("_", "")
+        answer = response.choices[0].message.content
+        clean_text = answer.replace("*", "").replace("#", "").replace("_", "")
         return clean_text
         
     except Exception as e:
@@ -93,10 +92,9 @@ def create_wav(raw_audio):
 
 
 # =========================
-# TTS (ASENKRON HALE GETİRİLDİ)
+# TTS
 # =========================
-def _sync_create_tts(text):
-    """Senkron çalışan TTS işlemlerini ana iş parçacığını bloklamamak için ayırdık."""
+def create_tts(text):
     mp3 = io.BytesIO()
     tts = gTTS(
         text=text,
@@ -112,10 +110,6 @@ def _sync_create_tts(text):
     audio = audio.set_sample_width(2)
     return audio.raw_data
 
-async def create_tts(text):
-    # Senkron fonksiyonu asenkron thread içinde çalıştırıyoruz
-    return await asyncio.to_thread(_sync_create_tts, text)
-
 
 # =========================
 # SES İŞLEME
@@ -124,31 +118,27 @@ async def process_audio(websocket, raw_audio):
     global is_processing
 
     try:
-        # Google Speech Recognition senkron çalıştığı için thread içine alıyoruz
         wav_file = create_wav(raw_audio)
         recognizer = sr.Recognizer()
 
-        def transcribe():
-            with sr.AudioFile(wav_file) as source:
-                audio = recognizer.record(source)
-            return recognizer.recognize_google(audio, language="tr-TR")
+        with sr.AudioFile(wav_file) as source:
+            audio = recognizer.record(source)
 
         try:
-            text = await asyncio.to_thread(transcribe)
+            text = recognizer.recognize_google(
+                audio,
+                language="tr-TR"
+            )
             print(f"\n🗣️ SİZ: {text}")
+
         except sr.UnknownValueError:
             print("❌ Ses anlaşılamadı")
             return
-        except Exception as e:
-            print(f"❌ Deşifre hatası: {e}")
-            return
 
-        # AI'dan asenkron yanıt bekle
         answer = await generate_ai_response(text)
         print(f"🤖 ASİSTAN: {answer}")
 
-        # DÜZELTİLDİ: Artık create_tts await ile çağrılıyor
-        pcm = await create_tts(answer)
+        pcm = create_tts(answer)
         print("📤 Ses gönderiliyor...")
 
         chunk_size = 2048
@@ -175,6 +165,7 @@ async def websocket_endpoint(websocket: WebSocket):
     global is_processing
     
     print("DEBUG: Yeni bir bağlantı isteği geldi!")
+
     await websocket.accept()
     print("⚡ ESP32 Bağlandı!")
 
@@ -196,7 +187,6 @@ async def websocket_endpoint(websocket: WebSocket):
             energy = int(np.std(samples))
             print(f"Ses: {energy}    ", end="\r")
 
-            # konuşma başladı/devam ediyor
             if energy > SILENCE_THRESHOLD:
                 if not is_speaking:
                     print("\n🎙️ Konuşma başladı")
@@ -205,8 +195,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 audio_buffer.extend(data)
                 silence_start = None
-
-            # sessizlik durumu
             else:
                 if is_speaking:
                     audio_buffer.extend(data)
@@ -218,7 +206,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         print("\n⏱️ İşleniyor...")
                         is_processing = True
                         
-                        # Task oluştururken verinin kopyasını güvenli aktarıyoruz
                         asyncio.create_task(
                             process_audio(websocket, bytes(audio_buffer))
                         )
@@ -231,18 +218,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"\n⚠️ WebSocket hata {e}")
 
-
-# =========================
-# RENDER HEALTH
-# =========================
 @app.get("/")
 def home():
-    return {"status": "ESP32 AI Server Running"}
+    return {"status": "ESP32 AI Server Running on GROQ"}
 
-
-# =========================
-# START
-# =========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
