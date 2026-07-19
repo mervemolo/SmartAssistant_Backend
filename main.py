@@ -28,7 +28,7 @@ else:
     print("⚠️ UYARI: GEMINI_API_KEY bulunamadı! Lütfen ortam değişkenlerini kontrol edin.")
 
 # Hızlı yanıt için flash modelini kullanıyoruz
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-2.0-flash")
 
 
 # =========================
