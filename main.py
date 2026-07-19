@@ -16,7 +16,7 @@ import static_ffmpeg
 static_ffmpeg.add_paths()
 
 # =========================
-# GEMINI AI AYARLARI (YENİ KÜTÜPHANE)
+# GEMINI AI AYARLARI 
 # =========================
 from google import genai
 
@@ -47,7 +47,7 @@ is_processing = False
 
 
 # =========================
-# AI CEVAP (YENİ KÜTÜPHANE)
+# AI CEVAP (GEMINI)
 # =========================
 async def generate_ai_response(text):
     if not client:
@@ -63,9 +63,9 @@ async def generate_ai_response(text):
             f"Kullanıcının söylediği: {text}"
         )
         
-        # Yeni kütüphanede asenkron (beklemesiz) çağrı 'client.aio' üzerinden yapılır
+        # 'gemini-1.5-flash' kotası daha geniş olduğu için bunu tercih ettim, 2.0 yapabilirsin
         response = await client.aio.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
         )
         
@@ -165,6 +165,9 @@ async def process_audio(websocket, raw_audio):
 @app.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
     global is_processing
+    
+    # HATA AYIKLAMA SİNYALİ
+    print("DEBUG: Yeni bir bağlantı isteği geldi!")
 
     await websocket.accept()
     print("⚡ ESP32 Bağlandı!")
