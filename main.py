@@ -63,14 +63,13 @@ async def generate_ai_response(text):
             f"Kullanıcının söylediği: {text}"
         )
         
-        # 'gemini-1.5-flash' kotası daha geniş olduğu için bunu tercih ettim, 2.0 yapabilirsin
+        # HATA DÜZELTİLDİ: Fazla parantez kaldırıldı ve kararlı asenkron model çağrısı yapıldı
         response = await client.aio.models.generate_content(
             model='gemini-2.0-flash',
             contents=prompt,
         )
-        )
         
-        # Gelen yanıttaki markdown işaretlerini temizle (TTS'in garip sesler çıkarmasını önler)
+        # Gelen yanıttaki markdown işaretlerini temizle
         clean_text = response.text.replace("*", "").replace("#", "").replace("_", "")
         return clean_text
         
@@ -94,9 +93,10 @@ def create_wav(raw_audio):
 
 
 # =========================
-# TTS
+# TTS (ASENKRON HALE GETİRİLDİ)
 # =========================
-def create_tts(text):
+def _sync_create_tts(text):
+    """Senkron çalışan TTS işlemlerini ana iş parçacığını bloklamamak için ayırdık."""
     mp3 = io.BytesIO()
     tts = gTTS(
         text=text,
@@ -112,6 +112,10 @@ def create_tts(text):
     audio = audio.set_sample_width(2)
     return audio.raw_data
 
+async def create_tts(text):
+    # Senkron fonksiyonu asenkron thread içinde çalıştırıyoruz
+    return await asyncio.to_thread(_sync_create_tts, text)
+
 
 # =========================
 # SES İŞLEME
@@ -120,28 +124,31 @@ async def process_audio(websocket, raw_audio):
     global is_processing
 
     try:
+        # Google Speech Recognition senkron çalıştığı için thread içine alıyoruz
         wav_file = create_wav(raw_audio)
         recognizer = sr.Recognizer()
 
-        with sr.AudioFile(wav_file) as source:
-            audio = recognizer.record(source)
+        def transcribe():
+            with sr.AudioFile(wav_file) as source:
+                audio = recognizer.record(source)
+            return recognizer.recognize_google(audio, language="tr-TR")
 
         try:
-            text = recognizer.recognize_google(
-                audio,
-                language="tr-TR"
-            )
+            text = await asyncio.to_thread(transcribe)
             print(f"\n🗣️ SİZ: {text}")
-
         except sr.UnknownValueError:
             print("❌ Ses anlaşılamadı")
+            return
+        except Exception as e:
+            print(f"❌ Deşifre hatası: {e}")
             return
 
         # AI'dan asenkron yanıt bekle
         answer = await generate_ai_response(text)
         print(f"🤖 ASİSTAN: {answer}")
 
-        pcm = create_tts(answer)
+        # DÜZELTİLDİ: Artık create_tts await ile çağrılıyor
+        pcm = await create_tts(answer)
         print("📤 Ses gönderiliyor...")
 
         chunk_size = 2048
@@ -167,9 +174,7 @@ async def process_audio(websocket, raw_audio):
 async def websocket_endpoint(websocket: WebSocket):
     global is_processing
     
-    # HATA AYIKLAMA SİNYALİ
     print("DEBUG: Yeni bir bağlantı isteği geldi!")
-
     await websocket.accept()
     print("⚡ ESP32 Bağlandı!")
 
@@ -191,7 +196,7 @@ async def websocket_endpoint(websocket: WebSocket):
             energy = int(np.std(samples))
             print(f"Ses: {energy}    ", end="\r")
 
-            # konuşma
+            # konuşma başladı/devam ediyor
             if energy > SILENCE_THRESHOLD:
                 if not is_speaking:
                     print("\n🎙️ Konuşma başladı")
@@ -201,7 +206,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 audio_buffer.extend(data)
                 silence_start = None
 
-            # sessizlik
+            # sessizlik durumu
             else:
                 if is_speaking:
                     audio_buffer.extend(data)
@@ -213,6 +218,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         print("\n⏱️ İşleniyor...")
                         is_processing = True
                         
+                        # Task oluştururken verinin kopyasını güvenli aktarıyoruz
                         asyncio.create_task(
                             process_audio(websocket, bytes(audio_buffer))
                         )
