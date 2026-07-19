@@ -16,19 +16,19 @@ import static_ffmpeg
 static_ffmpeg.add_paths()
 
 # =========================
-# GEMINI AI AYARLARI
+# GEMINI AI AYARLARI (YENİ KÜTÜPHANE)
 # =========================
-import google.generativeai as genai
+from google import genai
 
 # Ortam değişkeninden API anahtarını çekiyoruz
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
-    print("⚠️ UYARI: GEMINI_API_KEY bulunamadı! Lütfen ortam değişkenlerini kontrol edin.")
 
-# Hızlı yanıt için flash modelini kullanıyoruz
-model = genai.GenerativeModel("gemini-2.0-flash")
+# Yeni nesil GenAI istemcisini başlatıyoruz
+if GEMINI_API_KEY:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+else:
+    client = None
+    print("⚠️ UYARI: GEMINI_API_KEY bulunamadı! Lütfen ortam değişkenlerini kontrol edin.")
 
 
 # =========================
@@ -47,9 +47,12 @@ is_processing = False
 
 
 # =========================
-# AI CEVAP (GÜNCELLENDİ)
+# AI CEVAP (YENİ KÜTÜPHANE)
 # =========================
 async def generate_ai_response(text):
+    if not client:
+        return "Üzgünüm, yapay zeka anahtarı ayarlanmamış."
+        
     try:
         # Asistana kim olduğunu ve nasıl yanıt vereceğini belirten sistem komutu (Prompt)
         prompt = (
@@ -60,8 +63,11 @@ async def generate_ai_response(text):
             f"Kullanıcının söylediği: {text}"
         )
         
-        # Gemini'den asenkron (beklemesiz) olarak yanıt alıyoruz
-        response = await model.generate_content_async(prompt)
+        # Yeni kütüphanede asenkron (beklemesiz) çağrı 'client.aio' üzerinden yapılır
+        response = await client.aio.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+        )
         
         # Gelen yanıttaki markdown işaretlerini temizle (TTS'in garip sesler çıkarmasını önler)
         clean_text = response.text.replace("*", "").replace("#", "").replace("_", "")
@@ -107,7 +113,7 @@ def create_tts(text):
 
 
 # =========================
-# SES İŞLEME (GÜNCELLENDİ)
+# SES İŞLEME
 # =========================
 async def process_audio(websocket, raw_audio):
     global is_processing
@@ -130,7 +136,7 @@ async def process_audio(websocket, raw_audio):
             print("❌ Ses anlaşılamadı")
             return
 
-        # YENİ: Await eklenerek asenkron AI fonksiyonu çağrılıyor
+        # AI'dan asenkron yanıt bekle
         answer = await generate_ai_response(text)
         print(f"🤖 ASİSTAN: {answer}")
 
