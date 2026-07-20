@@ -58,7 +58,7 @@ async def generate_ai_response(text):
                 {
                     "role": "system", 
                     "content": (
-                        "Sen Mehmet'in ESP32 tabanlı akıllı ev asistanısın. "
+                        "Sen Merve'nin E S P 32 tabanlı akıllı ev asistanısın. "
                         "Yanıtların her zaman çok kısa, öz ve günlük konuşma dilinde olmalı. "
                         "Sesli asistan olduğun için uzun listeler veya karmaşık cümleler kurma. "
                         "Maksimum 1 veya 2 cümle ile cevap ver."
