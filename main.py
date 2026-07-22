@@ -5,6 +5,7 @@ import speech_recognition as sr
 import os
 import time
 import io
+from datetime import datetime
 
 from gtts import gTTS
 from pydub import AudioSegment
@@ -51,6 +52,9 @@ async def generate_ai_response(text):
     if not client:
         return "Üzgünüm, yapay zeka anahtarı ayarlanmamış."
         
+    # Güncel tarihi otomatik olarak alıyoruz (Böylece dünkü olayları değil bugünü bilir)
+    today = datetime.now().strftime("%d %B %Y")
+    
     try:
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile", # Groq'un süper hızlı ücretsiz modeli
@@ -58,7 +62,8 @@ async def generate_ai_response(text):
                 {
                     "role": "system", 
                     "content": (
-                        "Sen Merve'nin E S P 32 tabanlı akıllı ev asistanısın. "
+                        f"Sen Merve'nin E S P 32 tabanlı akıllı ev asistanısın. "
+                        f"Bugünün tarihi: {today}. "
                         "Yanıtların her zaman çok kısa, öz ve günlük konuşma dilinde olmalı. "
                         "Sesli asistan olduğun için uzun listeler veya karmaşık cümleler kurma. "
                         "Maksimum 1 veya 2 cümle ile cevap ver."
@@ -92,7 +97,7 @@ def create_wav(raw_audio):
 
 
 # =========================
-# TTS
+# TTS (SES YÜKSELTME İLE)
 # =========================
 def create_tts(text):
     mp3 = io.BytesIO()
@@ -105,6 +110,10 @@ def create_tts(text):
     mp3.seek(0)
 
     audio = AudioSegment.from_file(mp3, format="mp3")
+    
+    # Hoparlör sesini artırmak için desibel ekliyoruz (+8 dB)
+    audio = audio + 8  
+    
     audio = audio.set_frame_rate(SAMPLE_RATE)
     audio = audio.set_channels(1)
     audio = audio.set_sample_width(2)
