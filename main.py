@@ -5,7 +5,7 @@ import speech_recognition as sr
 import os
 import time
 import io
-import json  # Sensör verilerini okumak için eklendi
+import json
 from datetime import datetime
 
 from gtts import gTTS
@@ -45,43 +45,70 @@ SILENCE_DURATION = 1.5
 app = FastAPI()
 is_processing = False
 
-# =========================
-# GLOBAL SENSÖR BELLEĞİ
-# =========================
-# ESP32'den veri gelene kadar varsayılan durum
+# Global Sensör Belleği
 ev_durumu = "Sıcaklık ve nem normal düzeyde, hareket algılanmadı."
+
+# ========================================================
+# 🧠 YENİ: YAPAY ZEKA SOHBET HAFIZASI & 5 DK ZAMANLAYICI
+# ========================================================
+chat_history = []          # Sohbet geçmişini tutan liste
+last_interaction_time = 0  # Son konuşma zamanı damgası
+MEMORY_TIMEOUT = 300       # 5 dakika (300 saniye) sonra silme kuralı
 
 # =========================
 # AI CEVAP (GROQ / Llama 3)
 # =========================
 async def generate_ai_response(text):
+    global chat_history, last_interaction_time
     if not client:
         return "Üzgünüm, yapay zeka anahtarı ayarlanmamış."
         
     today = datetime.now().strftime("%d %B %Y")
+    current_time = time.time()
+    
+    # ⏱️ KURAL 1: Eğer son konuşmanın üzerinden 5 dakika geçtiyse hafızayı tamamen sil!
+    if last_interaction_time > 0 and (current_time - last_interaction_time > MEMORY_TIMEOUT):
+        chat_history = []
+        print("🧹 5 dakika hareketsizlik algılandı: Sohbet hafızası tamamen silindi.")
+        
+    # Son etkileşim zamanını şu ana güncelle
+    last_interaction_time = current_time
+    
+    # 🌡️ KURAL 2: Yapay zekanın sürekli oda sıcaklığından bahsetmesini engelleyen katı System Prompt
+    system_prompt = {
+        "role": "system", 
+        "content": (
+            f"Sen Merve'nin ESP32 tabanlı akıllı ev asistanısın. Bugünün tarihi: {today}. "
+            f"Evin anlık sensör durum raporu: {ev_durumu}. "
+            "⚠️ ÇOK KRİTİK KURAL: Kullanıcı sana doğrudan 'sıcaklık kaç?', 'nem yüzde kaç?', 'hava nasıl?' "
+            "gibi net bir sensör sorusu sormadığı sürece ODA SICAKLIĞINDAN VEYA SENSÖRLERDEN ASLA BAHSETME! "
+            "Gereksiz yere lafı sıcaklığa getirme. Normal, samimi, arkadaşça ve günlük konuşma dilinde sohbet et. "
+            "Sesli asistan olduğun için yanıtların her zaman maksimum 1 veya 2 kısa cümle olmalı."
+        )
+    }
+    
+    # İstek paketini hazırlama (Sistem Kuralları + Geçmiş Hafıza + Yeni Gelen Söz)
+    messages = [system_prompt]
+    messages.extend(chat_history)
+    messages.append({"role": "user", "content": text})
     
     try:
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": (
-                        f"Sen Merve'nin ESP32 tabanlı akıllı ev asistanısın. "
-                        f"Bugünün tarihi: {today}. "
-                        f"Evin anlık sensör durum raporu: {ev_durumu}. "
-                        "Kullanıcı oda sıcaklığı, nem, ışık (gece/gündüz) veya hareket ile ilgili bir şey sorduğunda "
-                        "mutlaka sana verilen bu güncel sensör verilerini baz alarak konuş. "
-                        "Yanıtların her zaman çok kısa, samimi, öz ve günlük konuşma dilinde olmalı. "
-                        "Maksimum 1 veya 2 kısa cümle ile net bir cevap ver."
-                    )
-                },
-                {"role": "user", "content": text}
-            ]
+            messages=messages
         )
         
         answer = response.choices[0].message.content
         clean_text = answer.replace("*", "").replace("#", "").replace("_", "")
+        
+        # 💾 Konuşmayı hafızaya kaydet (Bir sonraki cümlede hatırlaması için)
+        chat_history.append({"role": "user", "content": text})
+        chat_history.append({"role": "assistant", "content": clean_text})
+        
+        # Hafızanın aşırı şişip hata vermemesi için sadece son 10 diyaloğu (20 mesaj) tut
+        if len(chat_history) > 20:
+            chat_history = chat_history[-20:]
+            
         return clean_text
         
     except Exception as e:
@@ -188,14 +215,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # receive_bytes yerine ham paketi yakalıyoruz
             message = await websocket.receive()
 
             # 1. Senaryo: ESP32'den JSON formatında veri paketi (Metin) geldiyse
             if "text" in message:
                 try:
                     data_str = message["text"]
-                    # Eğer ESP32 "STOP" gibi kontrol komutları göndermiyorsa JSON olarak çöz
                     if data_str != "STOP":
                         veri = json.loads(data_str)
                         
@@ -204,7 +229,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         light = veri.get("isik", "GUNDUZ")
                         motion = veri.get("hareket", "YOK")
                         
-                        # Yapay zekanın okuyacağı metni dinamik olarak güncelle
                         ev_durumu = f"Oda sıcaklığı {temp} derece, nem oranı yüzde {hum}. Şu an ortam durumu: {light}. Odada hareket durumu: {motion}."
                         print(f"📊 Sensör Güncellendi -> Sıcaklık: {temp}°C | Nem: %{hum} | Işık: {light} | Hareket: {motion}")
                 except Exception as json_error:
