@@ -5,37 +5,55 @@ import speech_recognition as sr
 import os
 import time
 import io
-import json
+import json  # Sensör verilerini okumak için eklendi
 from datetime import datetime
 
 from gtts import gTTS
 from pydub import AudioSegment
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
-import static_ffmpeg
 
+import static_ffmpeg
 static_ffmpeg.add_paths()
 
+# =========================
+# GROQ AI AYARLARI
+# =========================
 from openai import AsyncOpenAI
+
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 if GROQ_API_KEY:
-    client = AsyncOpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
+    client = AsyncOpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=GROQ_API_KEY,
+    )
 else:
     client = None
     print("⚠️ UYARI: GROQ_API_KEY bulunamadı!")
 
+# =========================
+# AYARLAR
+# =========================
 SAMPLE_RATE = 16000
 CHANNELS = 1
+
 SILENCE_THRESHOLD = 500
 SILENCE_DURATION = 1.5
 
 app = FastAPI()
 is_processing = False
 
-# Sensör verilerini tutacağımız global değişken
-ev_durumu = "Sensör verisi henüz gelmedi."
+# =========================
+# GLOBAL SENSÖR BELLEĞİ
+# =========================
+# ESP32'den veri gelene kadar varsayılan durum
+ev_durumu = "Sıcaklık ve nem normal düzeyde, hareket algılanmadı."
 
+# =========================
+# AI CEVAP (GROQ / Llama 3)
+# =========================
 async def generate_ai_response(text):
     if not client:
         return "Üzgünüm, yapay zeka anahtarı ayarlanmamış."
@@ -51,20 +69,29 @@ async def generate_ai_response(text):
                     "content": (
                         f"Sen Merve'nin ESP32 tabanlı akıllı ev asistanısın. "
                         f"Bugünün tarihi: {today}. "
-                        f"Evin anlık durumu: {ev_durumu}. "
-                        "Kullanıcı evle ilgili bir şey sorarsa (sıcaklık, nem, hareket, ışık) bu verileri kullanarak doğal bir şekilde cevap ver. "
-                        "Yanıtların her zaman çok kısa, öz ve günlük konuşma dilinde olmalı. Maksimum 1-2 cümle kur."
+                        f"Evin anlık sensör durum raporu: {ev_durumu}. "
+                        "Kullanıcı oda sıcaklığı, nem, ışık (gece/gündüz) veya hareket ile ilgili bir şey sorduğunda "
+                        "mutlaka sana verilen bu güncel sensör verilerini baz alarak konuş. "
+                        "Yanıtların her zaman çok kısa, samimi, öz ve günlük konuşma dilinde olmalı. "
+                        "Maksimum 1 veya 2 kısa cümle ile net bir cevap ver."
                     )
                 },
                 {"role": "user", "content": text}
             ]
         )
+        
         answer = response.choices[0].message.content
-        return answer.replace("*", "").replace("#", "").replace("_", "")
+        clean_text = answer.replace("*", "").replace("#", "").replace("_", "")
+        return clean_text
+        
     except Exception as e:
         print(f"⚠️ AI Hatası: {e}")
-        return "Üzgünüm, bağlantı sorunu yaşıyorum."
+        return "Üzgünüm, şu an internet bağlantısı kuramıyorum."
 
+
+# =========================
+# PCM WAV OLUŞTUR
+# =========================
 def create_wav(raw_audio):
     mem = io.BytesIO()
     with wave.open(mem, "wb") as wf:
@@ -75,27 +102,49 @@ def create_wav(raw_audio):
     mem.seek(0)
     return mem
 
+
+# =========================
+# TTS (SES YÜKSELTME İLE)
+# =========================
 def create_tts(text):
     mp3 = io.BytesIO()
-    tts = gTTS(text=text, lang="tr", slow=False)
+    tts = gTTS(
+        text=text,
+        lang="tr",
+        slow=False
+    )
     tts.write_to_fp(mp3)
     mp3.seek(0)
+
     audio = AudioSegment.from_file(mp3, format="mp3")
     audio = audio + 8  
-    audio = audio.set_frame_rate(SAMPLE_RATE).set_channels(1).set_sample_width(2)
+    
+    audio = audio.set_frame_rate(SAMPLE_RATE)
+    audio = audio.set_channels(1)
+    audio = audio.set_sample_width(2)
     return audio.raw_data
 
+
+# =========================
+# SES İŞLEME
+# =========================
 async def process_audio(websocket, raw_audio):
     global is_processing
+
     try:
         wav_file = create_wav(raw_audio)
         recognizer = sr.Recognizer()
+
         with sr.AudioFile(wav_file) as source:
             audio = recognizer.record(source)
 
         try:
-            text = recognizer.recognize_google(audio, language="tr-TR")
+            text = recognizer.recognize_google(
+                audio,
+                language="tr-TR"
+            )
             print(f"\n🗣️ SİZ: {text}")
+
         except sr.UnknownValueError:
             print("❌ Ses anlaşılamadı")
             return
@@ -104,21 +153,32 @@ async def process_audio(websocket, raw_audio):
         print(f"🤖 ASİSTAN: {answer}")
 
         pcm = create_tts(answer)
+        print("📤 Ses gönderiliyor...")
+
         chunk_size = 2048
         for i in range(0, len(pcm), chunk_size):
             await websocket.send_bytes(pcm[i:i+chunk_size])
             await asyncio.sleep(0.01)
 
         await websocket.send_text("STOP")
+        print("✅ Cevap tamamlandı")
+
     except Exception as e:
         print(f"⚠️ İşlem hatası: {e}")
+
     finally:
         is_processing = False
         print("\n🎤 Dinleniyor...")
 
+
+# =========================
+# WEBSOCKET
+# =========================
 @app.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
     global is_processing, ev_durumu
+    
+    print("DEBUG: Yeni bir bağlantı isteği geldi!")
     await websocket.accept()
     print("⚡ ESP32 Bağlandı!")
 
@@ -128,42 +188,65 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # Artık hem metin (sensör) hem de bayt (ses) alabiliyoruz
+            # receive_bytes yerine ham paketi yakalıyoruz
             message = await websocket.receive()
-            
+
+            # 1. Senaryo: ESP32'den JSON formatında veri paketi (Metin) geldiyse
             if "text" in message:
                 try:
-                    veri = json.loads(message["text"])
-                    ev_durumu = f"Sıcaklık {veri.get('sicaklik')} derece, Nem %{veri.get('nem')}. Ortam: {veri.get('isik')}. Hareket durumu: {veri.get('hareket')}."
-                    print(f"📊 Sensör Güncellendi: {ev_durumu}")
-                except:
-                    pass
+                    data_str = message["text"]
+                    # Eğer ESP32 "STOP" gibi kontrol komutları göndermiyorsa JSON olarak çöz
+                    if data_str != "STOP":
+                        veri = json.loads(data_str)
+                        
+                        temp = veri.get("sicaklik", 0.0)
+                        hum = veri.get("nem", 0.0)
+                        light = veri.get("isik", "GUNDUZ")
+                        motion = veri.get("hareket", "YOK")
+                        
+                        # Yapay zekanın okuyacağı metni dinamik olarak güncelle
+                        ev_durumu = f"Oda sıcaklığı {temp} derece, nem oranı yüzde {hum}. Şu an ortam durumu: {light}. Odada hareket durumu: {motion}."
+                        print(f"📊 Sensör Güncellendi -> Sıcaklık: {temp}°C | Nem: %{hum} | Işık: {light} | Hareket: {motion}")
+                except Exception as json_error:
+                    print(f"⚠️ Sensör JSON ayrıştırma hatası: {json_error}")
                 continue
 
+            # 2. Senaryo: ESP32'den ses verisi (Bytes) geldiyse
             if "bytes" in message:
                 if is_processing:
                     continue
-                
+
                 data = message["bytes"]
                 samples = np.frombuffer(data, dtype=np.int16)
-                if len(samples) == 0: continue
+                if len(samples) == 0:
+                    continue
 
                 energy = int(np.std(samples))
-                
+                print(f"Ses: {energy}    ", end="\r")
+
                 if energy > SILENCE_THRESHOLD:
                     if not is_speaking:
+                        print("\n🎙️ Konuşma başladı")
                         audio_buffer.clear()
                         is_speaking = True
+                    
                     audio_buffer.extend(data)
                     silence_start = None
                 else:
                     if is_speaking:
                         audio_buffer.extend(data)
+                        
                         if silence_start is None:
                             silence_start = time.time()
+                        
                         elif (time.time() - silence_start) > SILENCE_DURATION:
+                            print("\n⏱️ İşleniyor...")
                             is_processing = True
-                            asyncio.create_task(process_audio(websocket, bytes(audio_buffer)))
+                            
+                            asyncio.create_task(
+                                process_audio(websocket, bytes(audio_buffer))
+                            )
+                            
                             audio_buffer.clear()
                             is_speaking = False
 
@@ -174,7 +257,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/")
 def home():
-    return {"status": "ESP32 AI Server Running"}
+    return {"status": "ESP32 AI Server Running on GROQ"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
