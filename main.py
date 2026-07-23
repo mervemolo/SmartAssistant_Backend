@@ -48,12 +48,10 @@ is_processing = False
 # Global Sensör Belleği
 ev_durumu = "Sıcaklık ve nem normal düzeyde, hareket algılanmadı."
 
-# ========================================================
-# 🧠 YENİ: YAPAY ZEKA SOHBET HAFIZASI & 5 DK ZAMANLAYICI
-# ========================================================
-chat_history = []          # Sohbet geçmişini tutan liste
-last_interaction_time = 0  # Son konuşma zamanı damgası
-MEMORY_TIMEOUT = 300       # 5 dakika (300 saniye) sonra silme kuralı
+# Sohbet Hafızası & 5 Dk Zamanlayıcı Değişkenleri
+chat_history = []          
+last_interaction_time = 0  
+MEMORY_TIMEOUT = 300       
 
 # =========================
 # AI CEVAP (GROQ / Llama 3)
@@ -66,28 +64,28 @@ async def generate_ai_response(text):
     today = datetime.now().strftime("%d %B %Y")
     current_time = time.time()
     
-    # ⏱️ KURAL 1: Eğer son konuşmanın üzerinden 5 dakika geçtiyse hafızayı tamamen sil!
+    # 5 dakika hareketsizlik kontrolü
     if last_interaction_time > 0 and (current_time - last_interaction_time > MEMORY_TIMEOUT):
         chat_history = []
         print("🧹 5 dakika hareketsizlik algılandı: Sohbet hafızası tamamen silindi.")
         
-    # Son etkileşim zamanını şu ana güncelle
     last_interaction_time = current_time
     
-    # 🌡️ KURAL 2: Yapay zekanın sürekli oda sıcaklığından bahsetmesini engelleyen katı System Prompt
+    # 🧠 DÜZELTİLEN YENİ SYSTEM PROMPT (NET VE KOŞULLU EMİRLER)
     system_prompt = {
         "role": "system", 
         "content": (
             f"Sen Merve'nin ESP32 tabanlı akıllı ev asistanısın. Bugünün tarihi: {today}. "
             f"Evin anlık sensör durum raporu: {ev_durumu}. "
-            "⚠️ ÇOK KRİTİK KURAL: Kullanıcı sana doğrudan 'sıcaklık kaç?', 'nem yüzde kaç?', 'hava nasıl?' "
-            "gibi net bir sensör sorusu sormadığı sürece ODA SICAKLIĞINDAN VEYA SENSÖRLERDEN ASLA BAHSETME! "
-            "Gereksiz yere lafı sıcaklığa getirme. Normal, samimi, arkadaşça ve günlük konuşma dilinde sohbet et. "
-            "Sesli asistan olduğun için yanıtların her zaman maksimum 1 veya 2 kısa cümle olmalı."
+            "\n\nKURALLAR:\n"
+            "1. EĞER kullanıcı sana odanın sıcaklığını, nemini, ışığını veya sensör değerlerini doğrudan SORARSA (Örn: 'kaç derece?', 'nem nasıl?'), "
+            "sana verilen durum raporundaki bilgileri kullanarak DOĞRU VE AÇIK BİR CEVAP VER.\n"
+            "2. EĞER kullanıcı sensörlerle ilgili bir şey sormuyorsa (normal sohbet ediyorsa, selam veriyorsa), "
+            "cümlelerine durup dururken sıcaklık veya nem bilgilerini ASLA EKLEME. Lafı gereksiz yere sensörlere getirme.\n"
+            "3. Sesli asistan olduğun için yanıtların her zaman samimi, doğal ve maksimum 1 veya 2 kısa cümle olmalı."
         )
     }
     
-    # İstek paketini hazırlama (Sistem Kuralları + Geçmiş Hafıza + Yeni Gelen Söz)
     messages = [system_prompt]
     messages.extend(chat_history)
     messages.append({"role": "user", "content": text})
@@ -101,11 +99,9 @@ async def generate_ai_response(text):
         answer = response.choices[0].message.content
         clean_text = answer.replace("*", "").replace("#", "").replace("_", "")
         
-        # 💾 Konuşmayı hafızaya kaydet (Bir sonraki cümlede hatırlaması için)
         chat_history.append({"role": "user", "content": text})
         chat_history.append({"role": "assistant", "content": clean_text})
         
-        # Hafızanın aşırı şişip hata vermemesi için sadece son 10 diyaloğu (20 mesaj) tut
         if len(chat_history) > 20:
             chat_history = chat_history[-20:]
             
@@ -113,7 +109,7 @@ async def generate_ai_response(text):
         
     except Exception as e:
         print(f"⚠️ AI Hatası: {e}")
-        return "Üzgünüm, şu an internet bağlantısı kuramıyorum."
+        return "Üzgünüm, şu an bağlantı kuramıyorum."
 
 
 # =========================
@@ -217,7 +213,6 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             message = await websocket.receive()
 
-            # 1. Senaryo: ESP32'den JSON formatında veri paketi (Metin) geldiyse
             if "text" in message:
                 try:
                     data_str = message["text"]
@@ -235,7 +230,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     print(f"⚠️ Sensör JSON ayrıştırma hatası: {json_error}")
                 continue
 
-            # 2. Senaryo: ESP32'den ses verisi (Bytes) geldiyse
             if "bytes" in message:
                 if is_processing:
                     continue
