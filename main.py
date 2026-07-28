@@ -48,6 +48,11 @@ is_processing = False
 # Global Sensör Belleği
 ev_durumu = "Sıcaklık ve nem normal düzeyde, hareket algılanmadı."
 
+# 🆕 ESP32'den Gelecek Zaman Bilgileri İçin Global Bellek
+esp_saat = "Bilinmiyor"
+esp_tarih = "Bilinmiyor"
+esp_gun = "Bilinmiyor"
+
 # Sohbet Hafızası & 5 Dk Zamanlayıcı Değişkenleri
 chat_history = []          
 last_interaction_time = 0  
@@ -57,11 +62,10 @@ MEMORY_TIMEOUT = 300
 # AI CEVAP (GROQ / Llama 3)
 # =========================
 async def generate_ai_response(text):
-    global chat_history, last_interaction_time
+    global chat_history, last_interaction_time, ev_durumu, esp_saat, esp_tarih, esp_gun
     if not client:
         return "Üzgünüm, yapay zeka anahtarı ayarlanmamış."
         
-    today = datetime.now().strftime("%d %B %Y")
     current_time = time.time()
     
     # 5 dakika hareketsizlik kontrolü
@@ -71,18 +75,21 @@ async def generate_ai_response(text):
         
     last_interaction_time = current_time
     
-    # 🧠 DÜZELTİLEN YENİ SYSTEM PROMPT (NET VE KOŞULLU EMİRLER)
+    # 🧠 DÜZELTİLEN YENİ SYSTEM PROMPT (ESP32 ZAMANI DAHİL EDİLDİ)
     system_prompt = {
         "role": "system", 
         "content": (
-            f"Sen Merve'nin ESP32 tabanlı akıllı ev asistanısın. Bugünün tarihi: {today}. "
+            f"Sen Merve'nin ESP32 tabanlı akıllı ev asistanısın. "
+            f"ZAMAN BİLGİSİ -> Bugünün Tarihi: {esp_tarih}, Günlerden: {esp_gun}, Şu Anki Saat: {esp_saat}. "
             f"Evin anlık sensör durum raporu: {ev_durumu}. "
             "\n\nKURALLAR:\n"
             "1. EĞER kullanıcı sana odanın sıcaklığını, nemini, ışığını veya sensör değerlerini doğrudan SORARSA (Örn: 'kaç derece?', 'nem nasıl?'), "
             "sana verilen durum raporundaki bilgileri kullanarak DOĞRU VE AÇIK BİR CEVAP VER.\n"
-            "2. EĞER kullanıcı sensörlerle ilgili bir şey sormuyorsa (normal sohbet ediyorsa, selam veriyorsa), "
-            "cümlelerine durup dururken sıcaklık veya nem bilgilerini ASLA EKLEME. Lafı gereksiz yere sensörlere getirme.\n"
-            "3. Sesli asistan olduğun için yanıtların her zaman samimi, doğal ve maksimum 1 veya 2 kısa cümle olmalı."
+            "2. EĞER kullanıcı sana saati, bugünün hangi gün olduğunu veya tarihi sorarsa (Örn: 'saat kaç?', 'bugün günlerden ne?'), "
+            "sana yukarıda verilen ZAMAN BİLGİSİNİ (Saat, Tarih, Gün) referans alarak tam ve doğru cevap ver.\n"
+            "3. EĞER kullanıcı sensörlerle veya zamanla ilgili bir şey sormuyorsa (normal sohbet ediyorsa, selam veriyorsa), "
+            "cümlelerine durup dururken sıcaklık, nem veya saat bilgilerini ASLA EKLEME. Lafı gereksiz yere buralara getirme.\n"
+            "4. Sesli asistan olduğun için yanıtların her zaman samimi, doğal ve maksimum 1 veya 2 kısa cümle olmalı."
         )
     }
     
@@ -199,7 +206,8 @@ async def process_audio(websocket, raw_audio):
 # =========================
 @app.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
-    global is_processing, ev_durumu
+    # 🆕 Zaman değişkenlerini küresel olarak değiştirebilmek için global alanına ekledik
+    global is_processing, ev_durumu, esp_saat, esp_tarih, esp_gun
     
     print("DEBUG: Yeni bir bağlantı isteği geldi!")
     await websocket.accept()
@@ -219,15 +227,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     if data_str != "STOP":
                         veri = json.loads(data_str)
                         
+                        # Sensör Verileri Ayıklama
                         temp = veri.get("sicaklik", 0.0)
                         hum = veri.get("nem", 0.0)
                         light = veri.get("isik", "GUNDUZ")
                         motion = veri.get("hareket", "YOK")
                         
                         ev_durumu = f"Oda sıcaklığı {temp} derece, nem oranı yüzde {hum}. Şu an ortam durumu: {light}. Odada hareket durumu: {motion}."
-                        print(f"📊 Sensör Güncellendi -> Sıcaklık: {temp}°C | Nem: %{hum} | Işık: {light} | Hareket: {motion}")
+                        
+                        # 🆕 ESP32'den Gelen Zaman Verilerini Ayıklama
+                        esp_saat = veri.get("saat", esp_saat)
+                        esp_tarih = veri.get("tarih", esp_tarih)
+                        esp_gun = veri.get("gun", esp_gun)
+                        
+                        print(f"📊 Sensör & Zaman Güncellendi -> Sıcaklık: {temp}°C | Saat: {esp_saat} | Tarih: {esp_tarih} | Gün: {esp_gun}")
                 except Exception as json_error:
-                    print(f"⚠️ Sensör JSON ayrıştırma hatası: {json_error}")
+                    print(f"⚠️ Sensör/Zaman JSON ayrıştırma hatası: {json_error}")
                 continue
 
             if "bytes" in message:
