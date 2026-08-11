@@ -75,7 +75,7 @@ async def generate_ai_response(text):
         
     last_interaction_time = current_time
     
-    # 🧠 DÜZELTİLEN YENİ SYSTEM PROMPT (ESP32 ZAMANI DAHİL EDİLDİ)
+   
     system_prompt = {
         "role": "system", 
         "content": (
@@ -119,9 +119,7 @@ async def generate_ai_response(text):
         return "Üzgünüm, şu an bağlantı kuramıyorum."
 
 
-# =========================
-# PCM WAV OLUŞTUR
-# =========================
+
 def create_wav(raw_audio):
     mem = io.BytesIO()
     with wave.open(mem, "wb") as wf:
@@ -133,9 +131,7 @@ def create_wav(raw_audio):
     return mem
 
 
-# =========================
-# TTS (SES YÜKSELTME İLE)
-# =========================
+
 def create_tts(text):
     mp3 = io.BytesIO()
     tts = gTTS(
@@ -155,9 +151,6 @@ def create_tts(text):
     return audio.raw_data
 
 
-# =========================
-# SES İŞLEME
-# =========================
 async def process_audio(websocket, raw_audio):
     global is_processing
 
@@ -206,7 +199,7 @@ async def process_audio(websocket, raw_audio):
 # =========================
 @app.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
-    # 🆕 Zaman değişkenlerini küresel olarak değiştirebilmek için global alanına ekledik
+  
     global is_processing, ev_durumu, esp_saat, esp_tarih, esp_gun
     
     print("DEBUG: Yeni bir bağlantı isteği geldi!")
@@ -235,7 +228,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         ev_durumu = f"Oda sıcaklığı {temp} derece, nem oranı yüzde {hum}. Şu an ortam durumu: {light}. Odada hareket durumu: {motion}."
                         
-                        # 🆕 ESP32'den Gelen Zaman Verilerini Ayıklama
+                        # ESP32'den Gelen Zaman Verilerini Ayıklama
                         esp_saat = veri.get("saat", esp_saat)
                         esp_tarih = veri.get("tarih", esp_tarih)
                         esp_gun = veri.get("gun", esp_gun)
